@@ -1,0 +1,462 @@
+#!/usr/bin/env python
+
+# Copyright 2013 OpenStack LLC
+#
+# Author: Zhihao Yuan <zhihao.yuan@rackspace.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+import getopt
+import os
+import pydoc
+import readline
+import sys
+import urlparse as _urlparse
+from tempfile import NamedTemporaryFile
+
+import requests
+
+urlparse = _urlparse.urlparse
+
+
+def urlbuild(*c):
+    return _urlparse.urlunparse(c + (None,) * (6 - len(c)))
+
+
+def __func__():
+    return sys._getframe(1).f_code.co_name
+
+
+def qw(s):
+    return s.split()
+
+
+class CommandError(Exception):
+    pass
+
+
+class ShellError(Exception):
+    pass
+
+
+class QuitREPL:
+    pass
+
+
+def getrec(dic, lst):
+    if lst == []:
+        return dic
+    return getrec(dic[lst[0]], lst[1:])
+
+
+def setrec(dic, lst, obj):
+    if len(lst) == 1:
+        dic[lst[0]] = obj
+    else:
+        setrec(dic[lst[0]], lst[1:], obj)
+
+
+def delrec(dic, lst):
+    if len(lst) == 1:
+        del dic[lst[0]]
+    else:
+        delrec(dic[lst[0]], lst[1:])
+
+
+def ls_print(d):
+    v_print(sorted(d))
+
+
+def editor_cmd():
+    return os.getenv('EDITOR') or ('notepad' if os.name == 'nt' else 'vi')
+
+
+#TODO(zyuan): Windows support
+def get_terminal_size(fd):
+    try:
+        import fcntl
+        import termios
+        import struct
+        hw = struct.unpack('hh', fcntl.ioctl(fd, termios.TIOCGWINSZ, '1234'))
+    except:
+        try:
+            hw = (os.environ['LINES'], os.environ['COLUMNS'])
+        except:
+            hw = (25, 80)
+    return hw
+
+
+def v_print(sl, out=sys.stdout):
+    if sl == []:
+        return
+
+    if not out.isatty():
+        for l in sl:
+            print >> out, l
+        return
+
+    w_max = max(map(len, sl))
+    w_max = (w_max + 8) & ~7
+    h, w = get_terminal_size(out.fileno())
+    cols = w / w_max
+
+    if cols < 2:
+        for l in sl:
+            print >> out, l
+        return
+
+    for l in dezip(sl, cols):
+        print >> out, ''.join(["%-*s" % (w_max, s) for s in l])
+
+
+def dezip(l, stride):
+    while len(l) > stride:
+        yield l[:stride]
+        l = l[stride:]
+    yield l
+
+
+# normalized only
+def upath(*p):
+    def iter(pl, l):
+        if pl == ():
+            return l
+        cl = pl[0].split('/')
+        if pl[0].startswith('/'):
+            return iter(pl[1:], cl)  # drop precedent components
+        else:
+            return iter(pl[1:], l + cl)
+    return iter(p, [])
+
+
+def ujoin(l):
+    return '/' if l == [''] else '/'.join(l)
+
+
+class Env(object):
+    def __init__(self, target=None):
+        self.__hier = {}
+        self.cwd = ['']
+        self.headers = {}  #TODO(zyuan): UA, Date, etc.
+
+        if target is None:
+            return
+
+        url = urlparse(target)
+
+        if url.scheme:
+            if url.scheme != 'https':
+                raise CommandError(__func__(), 'Protocol must be https')
+            if url.path != '/v1':
+                raise CommandError(__func__(), 'Only APIv1 is supported')
+            host = url.netloc
+            target = url.geturl()
+        else:
+            host = url.path
+            target = urlbuild('https', url.path, 'v1')
+
+        self.version = 1
+        self.__hier = {'health': None, 'queues': {}}
+
+        #TODO(zyuan): keystone, Tenant ID
+        self.headers['X-Auth-Token'] = '7d2f63fd-4dcc-4752-8e9b-1d08f989cc00'
+        self.id = '480924'
+        self.host = host
+
+    @property
+    def connected(self):
+        return hasattr(self, 'id')
+
+    def using(self, argv):
+        """fork a new shell
+
+        Usage:
+           using URL
+           using HOST
+
+        Examples:
+           using https://marconi.example.com/v1
+           using marconi.example.com
+        """
+
+        if len(argv) > 1:
+            raise CommandError(__func__(), 'Too many arguments')
+
+        if len(argv) == 0:
+            try:
+                l = raw_input('(marconi) ')
+                return self.using([l])
+            except EOFError:
+                raise ShellError('EOF')
+            except KeyboardInterrupt:
+                print
+                return
+
+        env = self.__class__(argv[0])
+        repl(env)
+
+    def cd(self, argv):
+        """change the working collection
+
+        Usage:
+           cd
+           cd PATH
+
+        Example:
+           cd /queues
+        """
+
+        if len(argv) > 1:
+            raise CommandError(__func__(), 'Too many arguments')
+
+        if len(argv) == 0:
+            self.cwd = ['']
+            return
+
+        p = upath(*self.cwd + argv)
+        try:
+            ent = getrec(self.__hier, p[1:])
+        except:
+            raise CommandError(argv[0], 'No such collection')
+        else:
+            if type(ent) == dict:
+                self.cwd = p
+            else:
+                raise CommandError(argv[0], 'Not a collection')
+
+    def _up(self, argv):
+        """change to the upper working collection
+        """
+
+        if len(argv) > 0:
+            raise CommandError(__func__(), 'Too many arguments')
+
+        if len(self.cwd) > 1:
+            self.cwd.pop()
+
+    def ls(self, argv):
+        """list collection contents
+
+        Usage:
+           ls
+           ls PATH...
+
+        Example:
+           ls /queues
+        """
+
+        if len(argv) == 0:
+            ls_print(getrec(self.__hier, self.cwd[1:]))
+            return
+
+        for pc in argv:
+            p = upath(*self.cwd + [pc])
+            try:
+                ent = getrec(self.__hier, p[1:])
+            except:
+                raise CommandError(pc, 'No such resource')
+            else:
+                if type(ent) == dict:
+                    ls_print(ent)
+                else:
+                    ls_print(p[-1:])
+
+    def rm(self, argv):
+        """remove a queue. a message, or a claim
+
+        Usage:
+           rm PATH
+           rm MESSAGE if CLAIM_ID
+
+        Examples:
+           rm /queues/fizbat
+           rm /queues/fizbat/messages/50b68 if a28ee94e
+        """
+        if len(argv) == 0:
+            self.help(['rm'])
+            return
+
+        if len(argv) > 2:
+            raise CommandError(__func__(), 'Too many arguments')
+
+        #TODO(zyuan): rm MESSAGE if CLAIM_ID
+
+        if len(argv) == 1:
+            p = upath(*self.cwd + [argv[0]])
+            if len(p) < 3:
+                raise CommandError(ujoin(p), 'Base path may not be removed')
+            try:
+                delrec(self.__hier, p[1:])
+            except:
+                raise CommandError(argv[0], 'No such resource')
+
+    def cat(self, argv):
+        # can be used to any specific json, including 'health' and 'stats'
+        # pretty-print (as a param)
+        pass
+
+    def more(self, argv):
+        # same as cat, with 'limit' + 'marker' supported
+        pass
+
+    def edit(self, argv):
+        """create or update a queue
+
+        Usage:
+           edit [option]... QUEUE_NAME
+
+        Examples:
+           edit /queues/fizbit
+        """
+
+        if len(argv) == 0:
+            raise CommandError(editor_cmd(), 'No queue name specified')
+
+        p = upath(*self.cwd + [argv[-1]])
+        if len(p) != 3 or p[1] != 'queues':
+            raise CommandError(argv[-1], 'Not a queue name')
+
+        with NamedTemporaryFile(prefix='macaroni-') as f:
+            st = os.system(' '.join([editor_cmd()] + argv[:-1] + [f.name]))
+            if st == 0:
+                setrec(self.__hier, p[1:],
+                       {'stats': None,
+                        # neither leaf nor dir
+                        'messages': 1, 'actions': 1, 'claims': 1})
+
+    def append(self, argv):
+        # launch $EDITOR on a tmpfile, and create a message/claim
+        pass
+
+    def quit(self, argv):
+        """terminate all marconi sessions and quit
+        """
+
+        if len(argv) > 0:
+            raise CommandError(__func__(), 'Too many arguments')
+
+        raise QuitREPL()
+
+    def help(self, argv):
+        """print local help information
+
+        Usage:
+           help
+           help COMMAND
+        """
+
+        aliases = default_aliases(self)
+
+        if len(argv) == 0:
+            ls_print(aliases)
+            return
+
+        if len(argv) > 1:
+            raise CommandError(__func__(), 'Too many arguments')
+
+        if not argv[0] in aliases:
+            raise ShellError("Unknown help command `%s'" % argv[0])
+
+        print pydoc.getdoc(aliases[argv[0]])
+
+
+def default_aliases(env):
+    aliases = dict([(name, getattr(env, name)) for name in
+                    qw('using cd ls rm cat more edit append quit help')])
+    aliases['..'] = env._up
+    return aliases
+
+
+def parse(s):
+    return s.split()
+
+
+def repl(env):
+    def prompt():
+        if not env.connected:
+            return 'macaroni> '
+        return "%s:%s> " % (env.host, ujoin(env.cwd))
+
+    aliases = default_aliases(env)
+
+    def completer(text, state):
+        #TODO(zyuan): syntax awared completion (`help`, `rm ... if`, etc.)
+        if readline.get_begidx() == 0:
+            cmd = [n for n in aliases if n.startswith(text)]
+            if state < len(cmd):
+                return cmd[state] + ' '
+        else:
+            p = upath(*env.cwd + [text])
+            try:
+                ent = getrec(env._Env__hier, p[1:-1])
+            except:
+                return
+            else:
+                if type(ent) == dict:
+                    pc = [n for n in ent if n.startswith(p[-1])]
+                    if state < len(pc):
+                        ps = text.rsplit('/', 1)
+                        ps[-1] = pc[state]
+                        return ujoin(ps) + \
+                            ('' if type(ent[pc[state]]) == dict else ' ')
+
+    readline.set_completer(completer)
+
+    while True:
+        try:
+            l = raw_input(prompt())
+            args = parse(l)
+            if args == []:
+                continue
+
+            if not args[0] in aliases:
+                raise ShellError('Unknown command')
+            if not env.connected and not args[0] in qw('using quit help'):
+                raise ShellError('Not connected')
+
+            aliases[args[0]](args[1:])
+        except EOFError:
+            print
+            break
+        except KeyboardInterrupt:
+            # C-c has no effect
+            print
+        except CommandError as e:
+            print >> sys.stderr, "%s: %s." % tuple(e)
+        except ShellError as e:
+            print >> sys.stderr, "%s." % e
+
+
+def usage():
+    print pydoc.strip("""
+usage: macaroni URL
+       macaroni HOST
+    """)
+
+
+if __name__ == '__main__':
+    readline.parse_and_bind("tab: complete")
+    readline.set_completer_delims(" \t")
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], 'h')
+        for k, v in opts:
+            if k == '-h':
+                usage()
+                sys.exit(0)
+        repl(Env(*args))
+    except getopt.GetoptError as e:
+        print e
+        usage()
+        sys.exit(2)
+    except QuitREPL:
+        sys.exit(0)
