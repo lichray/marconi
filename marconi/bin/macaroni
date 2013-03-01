@@ -302,11 +302,15 @@ class Env(object):
                 raise CommandError(argv[0], 'No such resource')
 
     def cat(self, argv):
+        """display the specific resources
+        """
         # can be used to any specific json, including 'health' and 'stats'
-        # pretty-print (as a param)
+        # pretty-print
         pass
 
     def more(self, argv):
+        """display multiple messages in a pager
+        """
         # same as cat, with 'limit' + 'marker' supported
         pass
 
@@ -336,7 +340,8 @@ class Env(object):
                         'messages': 1, 'actions': 1, 'claims': 1})
 
     def append(self, argv):
-        # launch $EDITOR on a tmpfile, and create a message/claim
+        """enqueue a message or create a claim
+        """
         pass
 
     def quit(self, argv):
@@ -359,7 +364,9 @@ class Env(object):
         aliases = default_aliases(self)
 
         if len(argv) == 0:
-            ls_print(aliases)
+            w_max = max(map(len, aliases))
+            for n, fn in sorted(aliases.iteritems()):
+                print " %*s  %s" % (w_max, n, pydoc.getdoc(fn).splitlines()[0])
             return
 
         if len(argv) > 1:
