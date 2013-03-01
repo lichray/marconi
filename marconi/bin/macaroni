@@ -147,7 +147,8 @@ class Env(object):
     def __init__(self, target=None):
         self.__hier = {}
         self.cwd = ['']
-        self.headers = {}  #TODO(zyuan): UA, Date, etc.
+        #TODO(zyuan): UA, Date, etc.
+        self.headers = {}
 
         if target is None:
             return
@@ -229,7 +230,7 @@ class Env(object):
         except:
             raise CommandError(argv[0], 'No such collection')
         else:
-            if type(ent) == dict:
+            if type(ent) is dict:
                 self.cwd = p
             else:
                 raise CommandError(argv[0], 'Not a collection')
@@ -266,7 +267,7 @@ class Env(object):
             except:
                 raise CommandError(pc, 'No such resource')
             else:
-                if type(ent) == dict:
+                if type(ent) is dict:
                     ls_print(ent)
                 else:
                     ls_print(p[-1:])
@@ -402,13 +403,13 @@ def repl(env):
             except:
                 return
             else:
-                if type(ent) == dict:
+                if type(ent) is dict:
                     pc = [n for n in ent if n.startswith(p[-1])]
                     if state < len(pc):
                         ps = text.rsplit('/', 1)
                         ps[-1] = pc[state]
                         return ujoin(ps) + \
-                            ('' if type(ent[pc[state]]) == dict else ' ')
+                            ('' if type(ent[pc[state]]) is dict else ' ')
 
     readline.set_completer(completer)
 
@@ -447,6 +448,7 @@ usage: macaroni URL
 if __name__ == '__main__':
     readline.parse_and_bind("tab: complete")
     readline.set_completer_delims(" \t")
+
     try:
         opts, args = getopt.getopt(sys.argv[1:], 'h')
         for k, v in opts:
