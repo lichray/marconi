@@ -34,7 +34,7 @@ class Driver(driver.DriverBase):
         forwarder_args = (self.partitions, self.catalogue,
                           self.cache, self.selector)
         return [
-            ('/health', health.Resource()),
+            ('/health', health.Resource(*forwarder_args)),
 
             # NOTE(cpp-cabrera): queue handling routes
             ('/queues',

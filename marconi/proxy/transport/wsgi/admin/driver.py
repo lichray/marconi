@@ -37,5 +37,5 @@ class Driver(driver.DriverBase):
             ('/catalogue/{queue}',
              catalogue.Resource(self.catalogue)),
             ('/health',
-             health.Resource())
+             health.Resource(self._storage))
         ]

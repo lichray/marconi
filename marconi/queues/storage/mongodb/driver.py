@@ -56,6 +56,13 @@ class DataDriver(storage.DataDriverBase):
                                 group=options.MONGODB_GROUP)
         self.mongodb_conf = self.conf[options.MONGODB_GROUP]
 
+    def is_alive(self):
+        try:
+            return 'ok' in self.connection.admin.command('ping')
+
+        except Exception:
+            return False
+
     @decorators.lazy_property(write=False)
     def queues_database(self):
         """Database dedicated to the "queues" collection.
