@@ -18,6 +18,7 @@ import uuid
 
 from oslo.config import cfg
 
+from marconi.common.cache import cache as oslo_cache
 from marconi.queues.storage import sharding
 from marconi.queues.storage import sqlite
 from marconi.queues.storage import utils
@@ -36,7 +37,8 @@ class TestShardCatalog(testing.TestBase):
 
         conf.register_opts([cfg.StrOpt('storage')],
                            group='queues:drivers')
-        control = utils.load_storage_driver(conf, control_mode=True)
+        cache = oslo_cache.get_cache(conf)
+        control = utils.load_storage_driver(conf, cache, control_mode=True)
         self.catalogue_ctrl = control.catalogue_controller
         self.shards_ctrl = control.shards_controller
 
@@ -46,7 +48,7 @@ class TestShardCatalog(testing.TestBase):
         self.project = str(uuid.uuid1())
         self.shards_ctrl.create(self.shard, 100, 'sqlite://memory')
         self.catalogue_ctrl.insert(self.project, self.queue, self.shard)
-        self.catalog = sharding.Catalog(conf, control)
+        self.catalog = sharding.Catalog(conf, cache, control)
 
     def tearDown(self):
         self.catalogue_ctrl.drop_all()
