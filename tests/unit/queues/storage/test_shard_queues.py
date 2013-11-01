@@ -19,25 +19,28 @@ import uuid
 
 from oslo.config import cfg
 
+from marconi.common.cache import cache as oslo_cache
 from marconi.queues.storage import sharding
 from marconi.queues.storage import utils
 from marconi import tests as testing
-from marconi.tests import base
 
 
-class TestShardQueues(base.TestBase):
+@testing.requires_mongodb
+class ShardQueuesTest(testing.TestBase):
 
-    @testing.requires_mongodb
     def setUp(self):
-        super(TestShardQueues, self).setUp()
+        super(ShardQueuesTest, self).setUp()
         conf = self.load_conf('wsgi_mongodb_sharded.conf')
 
         conf.register_opts([cfg.StrOpt('storage')],
                            group='queues:drivers')
 
-        control = utils.load_storage_driver(conf, control_mode=True)
+        cache = oslo_cache.get_cache(conf)
+        control = utils.load_storage_driver(conf, cache, control_mode=True)
         self.shards_ctrl = control.shards_controller
-        self.controller = sharding.DataDriver(conf, control).queue_controller
+
+        driver = sharding.DataDriver(conf, cache, control)
+        self.controller = driver.queue_controller
 
         # fake two shards
         for _ in xrange(2):
@@ -45,7 +48,7 @@ class TestShardQueues(base.TestBase):
 
     def tearDown(self):
         self.shards_ctrl.drop_all()
-        super(TestShardQueues, self).tearDown()
+        super(ShardQueuesTest, self).tearDown()
 
     def test_listing(self):
         project = "I.G"
