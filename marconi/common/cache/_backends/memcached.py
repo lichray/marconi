@@ -57,7 +57,7 @@ class MemcachedBackend(backends.BaseCache):
 
     def set(self, key, value, ttl=0):
         key = self._prepare_key(key)
-        self._cache.set(key, value, self._get_ttl(ttl))
+        return self._cache.set(key, value, self._get_ttl(ttl)) != 0
 
     def unset(self, key):
         self._cache.delete(self._prepare_key(key))
