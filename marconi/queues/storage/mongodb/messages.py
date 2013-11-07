@@ -20,7 +20,6 @@ Field Mappings:
     field names will be, most of the time, the first
     letter of their long name.
 """
-
 import datetime
 import time
 
@@ -316,7 +315,9 @@ class MessageController(storage.MessageBase):
         preference = pymongo.read_preferences.ReadPreference.PRIMARY
         collection = self._collection(queue_name, project)
         msgs = collection.find(query, sort=[('k', 1)],
-                               read_preference=preference)
+                               read_preference=preference).hint(
+                                   CLAIMED_INDEX_FIELDS
+                               )
 
         if limit is not None:
             msgs = msgs.limit(limit)
