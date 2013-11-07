@@ -633,9 +633,11 @@ class MessageController(storage.MessageBase):
             return
 
         now = timeutils.utcnow_ts()
-        message = collection.find_one(query)
+        cursor = collection.find(query).hint(ID_INDEX_FIELDS)
 
-        if message is None:
+        try:
+            message = next(cursor)
+        except StopIteration:
             return
 
         is_claimed = (message['c']['id'] is not None and
@@ -651,7 +653,15 @@ class MessageController(storage.MessageBase):
                 # was just barely claimed, and claim hasn't made it to
                 # the secondary.
                 pref = pymongo.read_preferences.ReadPreference.PRIMARY
-                message = collection.find_one(query, read_preference=pref)
+                cursor = collection.find(query,
+                                         read_preference=pref).hint(
+                                             ID_INDEX_FIELDS
+                                         )
+
+                try:
+                    message = next(cursor)
+                except StopIteration:
+                    return
 
                 if message['c']['id'] != cid:
                     raise errors.MessageIsClaimedBy(message_id, claim)
