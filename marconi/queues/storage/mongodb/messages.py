@@ -21,7 +21,6 @@ Field Mappings:
     letter of their long name.
 """
 import datetime
-import time
 
 import pymongo.errors
 import pymongo.read_preferences
@@ -109,7 +108,7 @@ class MessageController(storage.MessageBase):
         # Cache for convenience and performance
         self._num_partitions = self.driver.mongodb_conf.partitions
         self._queue_ctrl = self.driver.queue_controller
-        self._retry_range = range(self.driver.mongodb_conf.max_attempts)
+        self._retry_range = xrange(self.driver.mongodb_conf.max_attempts)
 
         # Create a list of 'messages' collections, one for each database
         # partition, ordered by partition number.
@@ -165,22 +164,6 @@ class MessageController(storage.MessageBase):
         """Get a partitioned collection instance."""
         return self._collections[utils.get_partition(self._num_partitions,
                                                      queue_name, project)]
-
-    def _backoff_sleep(self, attempt):
-        """Sleep between retries using a jitter algorithm.
-
-        Mitigates thrashing between multiple parallel requests, and
-        creates backpressure on clients to slow down the rate
-        at which they submit requests.
-
-        :param attempt: current attempt number, zero-based
-        """
-        conf = self.driver.mongodb_conf
-        seconds = utils.calculate_backoff(attempt, conf.max_attempts,
-                                          conf.max_retry_sleep,
-                                          conf.max_retry_jitter)
-
-        time.sleep(seconds)
 
     def _purge_queue(self, queue_name, project=None):
         """Removes all messages from the queue.
@@ -542,7 +525,7 @@ class MessageController(storage.MessageBase):
                     break
 
                 # Chill out for a moment to mitigate thrashing/thundering
-                self._backoff_sleep(attempt)
+                utils.backoff_sleep(self, attempt)
 
                 # NOTE(kgriffs): Perhaps we failed because a worker crashed
                 # after inserting messages, but before incrementing the

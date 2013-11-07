@@ -18,6 +18,7 @@ import collections
 import datetime
 import functools
 import random
+import time
 
 from bson import errors as berrors
 from bson import objectid
@@ -100,6 +101,23 @@ def calculate_backoff(attempt, max_attempts, max_sleep, max_jitter=0):
     jitter_sec = random.random() * max_jitter
 
     return backoff_sec + jitter_sec
+
+
+def backoff_sleep(self, attempt):
+    """Sleep between retries using a jitter algorithm.
+
+    Mitigates thrashing between multiple parallel requests, and
+    creates backpressure on clients to slow down the rate
+    at which they submit requests.
+
+    :param attempt: current attempt number, zero-based
+    """
+    conf = self.driver.mongodb_conf
+    seconds = calculate_backoff(attempt, conf.max_attempts,
+                                conf.max_retry_sleep,
+                                conf.max_retry_jitter)
+
+    time.sleep(seconds)
 
 
 def to_oid(obj):
@@ -237,7 +255,7 @@ def get_partition(num_partitions, queue, project=None):
     return binascii.crc32(name) % num_partitions
 
 
-def raises_conn_error(func):
+def simply_raises_conn_error(func):
     """Handles mongodb ConnectionFailure error
 
     This decorator catches mongodb's ConnectionFailure
@@ -248,6 +266,33 @@ def raises_conn_error(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
+        except errors.ConnectionFailure as ex:
+            # NOTE(flaper87): Raise the error
+            LOG.exception(ex)
+            msg = u'ConnectionFailure caught'
+            raise storage_errors.ConnectionError(msg)
+
+    return wrapper
+
+
+def raises_conn_error(func):
+    """Handles mongodb ConnectionFailure error
+
+    This decorator catches mongodb's ConnectionFailure
+    error and raises Marconi's ConnectionError instead.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            for attempt in xrange(args[0].driver.mongodb_conf.max_attempts):
+                try:
+                    return func(*args, **kwargs)
+
+                except errors.AutoReconnect:
+                    backoff_sleep(args[0], attempt)
+                    continue
+
         except errors.ConnectionFailure as ex:
             # NOTE(flaper87): Raise the error
             LOG.exception(ex)
@@ -272,7 +317,7 @@ class HookedCursor(object):
     def __len__(self):
         return self.cursor.count(True)
 
-    @raises_conn_error
+    @simply_raises_conn_error
     def next(self):
         item = next(self.cursor)
         return self.denormalizer(item)
